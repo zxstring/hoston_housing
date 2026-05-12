@@ -1,0 +1,6 @@
+__pycache__/
+output_s*/
+run_s*.log
+summary_all.csv
+train_parallel.py
+run_multi.sh

@@ -1,0 +1,7 @@
+model,mse,mae,r2,cv_mse_mean,cv_mse_std,train_time_s,best_params
+XGBoost,8.1035,1.8897,0.8895,12.4971,4.7263,79.54,"{""colsample_bytree"": 0.5866823267538861, ""learning_rate"": 0.1027651518933102, ""max_depth"": 3, ""n_estimators"": 971, ""reg_alpha"": 11.330421154764787, ""reg_lambda"": 6.37733811736867, ""subsample"": 0.6039708314340944}"
+LightGBM,8.7849,2.1104,0.8802,13.2408,4.4754,144.59,"{""colsample_bytree"": 0.767044709687721, ""learning_rate"": 0.1262074928397458, ""max_depth"": 2, ""n_estimators"": 918, ""num_leaves"": 186, ""reg_alpha"": 3.6618828337166125, ""reg_lambda"": 2.5243656325939585, ""subsample"": 0.6093821097865351}"
+Stacking,8.8211,1.8033,0.8797,10.9512,2.1425,1.43,N/A (fixed architecture)
+RandomForest,11.5205,2.0772,0.8429,15.1015,3.6587,31.65,"{""max_depth"": 8, ""max_features"": 0.30054513608871003, ""min_samples_leaf"": 4, ""min_samples_split"": 6, ""n_estimators"": 210}"
+Ridge,12.8612,2.084,0.8246,11.8414,2.8363,3.0,"{""ridge__alpha"": 0.5622117123602399}"
+DecisionTree,15.5704,2.7678,0.7877,22.5107,6.391,2.44,"{""max_depth"": 8, ""min_samples_leaf"": 9, ""min_samples_split"": 9}"
