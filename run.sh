@@ -10,5 +10,5 @@ fi
 
 export SEED="${SEED:-42}"
 echo "SEED=$SEED"
-python -u train.py
+timeout --signal=KILL 600s python -u train.py
 echo "Done. Output → output_s${SEED}/"

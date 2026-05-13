@@ -1,6 +1,6 @@
 """Boston housing — single fast run. Called by run.sh with $SEED env var."""
 
-import json, os, sys, time, warnings
+import json, multiprocessing as mp, os, sys, time, warnings
 from pathlib import Path
 
 import matplotlib; matplotlib.use("Agg")
@@ -25,6 +25,7 @@ warnings.filterwarnings("ignore")
 SEED = int(os.environ.get("SEED", 42))
 N_ITER = 30
 CV = 5
+TIMEOUT_PER_MODEL = 120  # seconds
 
 OUTPUT_DIR = Path(__file__).resolve().parent / f"output_s{SEED}"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -61,7 +62,8 @@ def build(name):
     if name == "XGBoost":      return XGBRegressor(random_state=SEED, tree_method="hist", device="cpu", verbosity=0, nthread=4)
     if name == "LightGBM":     return LGBMRegressor(random_state=SEED, device="cpu", verbose=-1, num_threads=4)
 
-def tune(name, Xt, yt, Xe, ye):
+def _fit_model(name, Xt, yt, Xe, ye):
+    """Actual tuning + evaluation. Runs in a subprocess so a hang doesn't block main."""
     t0 = time.perf_counter()
     s = RandomizedSearchCV(build(name), PARAM_DISTS[name], n_iter=N_ITER, cv=CV,
                            scoring="neg_mean_squared_error", n_jobs=1, random_state=SEED)
@@ -74,6 +76,38 @@ def tune(name, Xt, yt, Xe, ye):
     return {"model": name, "mse": round(mse,4), "mae": round(mae,4), "r2": round(r2,4),
             "cv_mse": round(-cv_s.mean(),4), "seed": SEED, "time_s": round(dt,1),
             "best_params": json.dumps(s.best_params_, default=str)}
+
+def _fit_subprocess(q, name, Xt, yt, Xe, ye):
+    """Entry point for the subprocess — calls _fit_model and puts result on queue."""
+    try:
+        result = _fit_model(name, Xt, yt, Xe, ye)
+        q.put(result)
+    except Exception as e:
+        q.put({"error": str(e)})
+
+def tune(name, Xt, yt, Xe, ye, timeout=TIMEOUT_PER_MODEL):
+    """Tune one model with process-level timeout. Fall back to default-param fit on timeout."""
+    ctx = mp.get_context("fork")
+    q = ctx.Queue()
+    p = ctx.Process(target=_fit_subprocess, args=(q, name, Xt, yt, Xe, ye))
+    p.start()
+    p.join(timeout)
+    if p.is_alive():
+        p.terminate()
+        p.join()
+        t0 = time.perf_counter()
+        est = build(name).fit(Xt, yt)
+        dt = time.perf_counter() - t0
+        yp = est.predict(Xe)
+        mse = mean_squared_error(ye, yp); mae = mean_absolute_error(ye, yp); r2 = r2_score(ye, yp)
+        cv_s = cross_val_score(est, Xt, yt, cv=CV, scoring="neg_mean_squared_error")
+        return {"model": name, "mse": round(mse,4), "mae": round(mae,4), "r2": round(r2,4),
+                "cv_mse": round(-cv_s.mean(),4), "seed": SEED, "time_s": round(dt,1),
+                "best_params": "{}", "note": "timed_out"}
+    result = q.get()
+    if "error" in result:
+        raise RuntimeError(f"Tuning failed for {name}: {result['error']}")
+    return result
 
 def main():
     print(f"SEED={SEED}  N_ITER={N_ITER}  CV={CV}")
