@@ -1,6 +1,6 @@
 """Parameter grids for Boston housing price prediction models."""
 
-from scipy.stats import randint, uniform
+from scipy.stats import randint, uniform, loguniform
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
@@ -8,7 +8,7 @@ CV_FOLDS = 5
 
 N_ITER_FAST = 100   # Ridge, DT (instant)
 N_ITER_MED  = 30    # RandomForest (each fit trains many trees)
-N_ITER_BOOST = 20   # XGBoost, LightGBM (RepeatedKFold 5×2 = 10 folds, 20×10=200 fits)
+N_ITER_BOOST = 60   # XGBoost, LightGBM (higher search budget for better R2)
 
 # Use RepeatedKFold for boosting models to reduce CV variance
 BOOST_CV = {"n_splits": 5, "n_repeats": 2}
@@ -17,7 +17,11 @@ REGULAR_CV = 5
 # Per-model timeout (seconds) — boosting models get more headroom
 TIMEOUT_FAST = 60
 TIMEOUT_MED = 120
-TIMEOUT_BOOST = 300
+TIMEOUT_BOOST = 420
+
+# Boosting-specific validation split + early stopping
+BOOST_VALID_SIZE = 0.2
+BOOST_EARLY_STOP = 50
 
 # ── RandomizedSearchCV distributions ──────────────────────────────────────
 
@@ -40,24 +44,28 @@ RF_PARAM_DIST = {
 }
 
 XGB_PARAM_DIST = {
-    "n_estimators": randint(60, 350),
+    "n_estimators": randint(200, 2000),
     "max_depth": randint(2, 10),
-    "learning_rate": uniform(0.01, 0.25),
-    "subsample": uniform(0.5, 0.5),
-    "colsample_bytree": uniform(0.5, 0.5),
-    "reg_lambda": uniform(0, 15),
-    "reg_alpha": uniform(0, 15),
+    "learning_rate": loguniform(0.01, 0.3),
+    "subsample": uniform(0.6, 0.4),
+    "colsample_bytree": uniform(0.6, 0.4),
+    "min_child_weight": randint(1, 12),
+    "gamma": uniform(0, 5),
+    "reg_lambda": uniform(0, 20),
+    "reg_alpha": uniform(0, 20),
 }
 
 LGB_PARAM_DIST = {
-    "n_estimators": randint(60, 350),
-    "max_depth": randint(2, 10),
-    "learning_rate": uniform(0.01, 0.25),
-    "subsample": uniform(0.5, 0.5),
-    "colsample_bytree": uniform(0.5, 0.5),
-    "reg_lambda": uniform(0, 15),
-    "reg_alpha": uniform(0, 15),
-    "num_leaves": randint(15, 127),
+    "n_estimators": randint(200, 2000),
+    "max_depth": randint(2, 12),
+    "learning_rate": loguniform(0.01, 0.3),
+    "subsample": uniform(0.6, 0.4),
+    "colsample_bytree": uniform(0.6, 0.4),
+    "reg_lambda": uniform(0, 20),
+    "reg_alpha": uniform(0, 20),
+    "num_leaves": randint(20, 256),
+    "min_child_samples": randint(5, 60),
+    "min_split_gain": uniform(0, 0.5),
 }
 
 MODEL_PARAMS = {

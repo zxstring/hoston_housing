@@ -9,14 +9,21 @@ import numpy as np
 import pandas as pd
 from sklearn.datasets import fetch_openml
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.base import clone
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import RandomizedSearchCV, RepeatedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import (
+    PredefinedSplit,
+    RandomizedSearchCV,
+    RepeatedKFold,
+    cross_val_score,
+    train_test_split,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 from xgboost import XGBRegressor
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMRegressor, early_stopping
 
 import config
 
@@ -80,28 +87,86 @@ def build(name):
     elif name == "RandomForest":
         return RandomForestRegressor(random_state=SEED)
     elif name == "XGBoost":
-        return XGBRegressor(random_state=SEED, tree_method="hist",
-                            device="cpu", verbosity=0, nthread=1)
+        return XGBRegressor(
+            random_state=SEED,
+            tree_method="hist",
+            device="cpu",
+            verbosity=0,
+            nthread=1,
+            objective="reg:squarederror",
+            eval_metric="rmse",
+        )
     elif name == "LightGBM":
-        return LGBMRegressor(random_state=SEED, device="cpu",
-                             verbose=-1, num_threads=1)
+        return LGBMRegressor(
+            random_state=SEED,
+            device="cpu",
+            verbose=-1,
+            num_threads=1,
+            objective="regression",
+        )
     raise ValueError(f"Unknown model: {name}")
 
 
 # ── Tuning / evaluation ────────────────────────────────────────────────────
 
+def _refit_best_boost(est, name, Xt, yt):
+    best_iter = None
+    if name == "XGBoost":
+        best_iter = getattr(est, "best_iteration", None)
+        if best_iter is not None:
+            best_iter += 1
+    elif name == "LightGBM":
+        best_iter = getattr(est, "best_iteration_", None)
+
+    if not best_iter:
+        return est
+
+    refit = clone(est)
+    refit.set_params(n_estimators=int(best_iter))
+    refit.fit(Xt, yt)
+    return refit
+
 def _fit_model(name, Xt, yt, Xe, ye):
     """Actual tuning + evaluation. Runs in a subprocess for timeout safety."""
     param_dist, n_iter, _ = config.MODEL_PARAMS[name]
-    cv = RepeatedKFold(**config.BOOST_CV, random_state=SEED) \
-        if name in ("XGBoost", "LightGBM") else config.REGULAR_CV
+    is_boost = name in ("XGBoost", "LightGBM")
+
+    if is_boost:
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            Xt, yt, test_size=config.BOOST_VALID_SIZE, random_state=SEED)
+        X_search = pd.concat([X_tr, X_val], axis=0)
+        y_search = np.concatenate([y_tr, y_val])
+        test_fold = np.concatenate([
+            np.full(len(X_tr), -1),
+            np.zeros(len(X_val), dtype=int),
+        ])
+        cv = PredefinedSplit(test_fold)
+        if name == "XGBoost":
+            fit_params = {}
+        else:
+            fit_params = {
+                "eval_set": [(X_val, y_val)],
+                "callbacks": [
+                    early_stopping(config.BOOST_EARLY_STOP, verbose=False)
+                ],
+            }
+    else:
+        X_search, y_search = Xt, yt
+        cv = config.REGULAR_CV
+        fit_params = {}
 
     t0 = time.perf_counter()
     search = RandomizedSearchCV(
         build(name), param_distributions=param_dist, n_iter=n_iter,
-        cv=cv, scoring="neg_mean_squared_error", n_jobs=1, random_state=SEED)
-    search.fit(Xt, yt)
+        cv=cv, scoring="r2", n_jobs=1, random_state=SEED)
+    if fit_params:
+        search.fit(X_search, y_search, **fit_params)
+    else:
+        search.fit(X_search, y_search)
+
     est = search.best_estimator_
+    if is_boost:
+        est = _refit_best_boost(est, name, Xt, yt)
     dt = time.perf_counter() - t0
 
     yp = est.predict(Xe)
@@ -110,7 +175,7 @@ def _fit_model(name, Xt, yt, Xe, ye):
     r2 = r2_score(ye, yp)
 
     eval_cv = RepeatedKFold(**config.BOOST_CV, random_state=SEED) \
-        if name in ("XGBoost", "LightGBM") else config.REGULAR_CV
+        if is_boost else config.REGULAR_CV
     cv_s = cross_val_score(est, Xt, yt, cv=eval_cv,
                            scoring="neg_mean_squared_error")
 
