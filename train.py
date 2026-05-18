@@ -206,7 +206,6 @@ def _fit_model(name, Xt, yt, Xe, ye):
         "r2": round(r2, 4), "cv_mse": round(-cv_s.mean(), 4),
         "seed": SEED, "time_s": round(dt, 1),
         "best_params": json.dumps(search.best_params_, default=str),
-        "y_pred": yp,
     }
 
 
@@ -244,7 +243,6 @@ def tune(name, Xt, yt, Xe, ye):
             "r2": round(r2, 4), "cv_mse": round(-cv_s.mean(), 4),
             "seed": SEED, "time_s": round(dt, 1),
             "best_params": "{}", "note": "timed_out",
-            "y_pred": yp,
         }
     result = q.get()
     if "error" in result:
@@ -282,39 +280,12 @@ def main():
                   f"{r['time_s']:.0f}s{extra}")
 
     results.sort(key=lambda r: r["mse"])
+    pd.DataFrame(results).drop(columns=["best_params"]).to_csv(
+        OUTPUT_DIR / "results.csv", index=False)
     best = results[0]
     total = time.perf_counter() - t_total
     print(f"\nBest: {best['model']}  MSE={best['mse']:.4f}  R²={best['r2']:.4f}")
-
-    # ── Ensemble ──────────────────────────────────────────────────────────
-    preds = {r["model"]: r.pop("y_pred") for r in results}
-
-    # simple average
-    y_simple = np.mean(list(preds.values()), axis=0)
-    r2_simple = r2_score(ye, y_simple)
-    mse_simple = mean_squared_error(ye, y_simple)
-    mae_simple = mean_absolute_error(ye, y_simple)
-    print(f"Ensemble (simple avg)   MSE={mse_simple:.4f}  R²={r2_simple:.4f}")
-
-    # weighted by 1/CV_MSE
-    weights = {r["model"]: 1.0 / r["cv_mse"] for r in results}
-    w_sum = sum(weights.values())
-    y_weighted = sum(preds[m] * weights[m] for m in preds) / w_sum
-    r2_weighted = r2_score(ye, y_weighted)
-    mse_weighted = mean_squared_error(ye, y_weighted)
-    mae_weighted = mean_absolute_error(ye, y_weighted)
-    print(f"Ensemble (weighted)     MSE={mse_weighted:.4f}  R²={r2_weighted:.4f}")
-
-    results.append({"model": "Ensemble(simple)",  "mse": round(mse_simple, 4),
-                    "mae": round(mae_simple, 4), "r2": round(r2_simple, 4),
-                    "cv_mse": "", "seed": SEED, "time_s": ""})
-    results.append({"model": "Ensemble(weighted)", "mse": round(mse_weighted, 4),
-                    "mae": round(mae_weighted, 4), "r2": round(r2_weighted, 4),
-                    "cv_mse": "", "seed": SEED, "time_s": ""})
-
-    pd.DataFrame(results).drop(columns=["best_params"], errors="ignore").to_csv(
-        OUTPUT_DIR / "results.csv", index=False)
-    print(f"\nTotal time: {total:.0f}s")
+    print(f"Total time: {total:.0f}s")
 
 
 if __name__ == "__main__":
