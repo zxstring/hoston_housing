@@ -8,11 +8,16 @@ CV_FOLDS = 5
 
 N_ITER_FAST = 100   # Ridge, DT (instant)
 N_ITER_MED  = 30    # RandomForest (each fit trains many trees)
-N_ITER_BOOST = 30   # XGBoost, LightGBM (RepeatedKFold 5×2 = 10 folds, 30×10=300 fits)
+N_ITER_BOOST = 20   # XGBoost, LightGBM (RepeatedKFold 5×2 = 10 folds, 20×10=200 fits)
 
 # Use RepeatedKFold for boosting models to reduce CV variance
 BOOST_CV = {"n_splits": 5, "n_repeats": 2}
 REGULAR_CV = 5
+
+# Per-model timeout (seconds) — boosting models get more headroom
+TIMEOUT_FAST = 60
+TIMEOUT_MED = 120
+TIMEOUT_BOOST = 300
 
 # ── RandomizedSearchCV distributions ──────────────────────────────────────
 
@@ -35,9 +40,9 @@ RF_PARAM_DIST = {
 }
 
 XGB_PARAM_DIST = {
-    "n_estimators": randint(100, 1000),
+    "n_estimators": randint(60, 350),
     "max_depth": randint(2, 10),
-    "learning_rate": uniform(0.005, 0.25),
+    "learning_rate": uniform(0.01, 0.25),
     "subsample": uniform(0.5, 0.5),
     "colsample_bytree": uniform(0.5, 0.5),
     "reg_lambda": uniform(0, 15),
@@ -45,21 +50,21 @@ XGB_PARAM_DIST = {
 }
 
 LGB_PARAM_DIST = {
-    "n_estimators": randint(100, 1000),
+    "n_estimators": randint(60, 350),
     "max_depth": randint(2, 10),
-    "learning_rate": uniform(0.005, 0.25),
+    "learning_rate": uniform(0.01, 0.25),
     "subsample": uniform(0.5, 0.5),
     "colsample_bytree": uniform(0.5, 0.5),
     "reg_lambda": uniform(0, 15),
     "reg_alpha": uniform(0, 15),
-    "num_leaves": randint(15, 200),
+    "num_leaves": randint(15, 127),
 }
 
 MODEL_PARAMS = {
-    "LinearRegression": ({},             N_ITER_FAST),
-    "Ridge":        (RIDGE_PARAM_DIST, N_ITER_FAST),
-    "DecisionTree": (DT_PARAM_DIST,   N_ITER_FAST),
-    "RandomForest": (RF_PARAM_DIST,   N_ITER_MED),
-    "XGBoost":      (XGB_PARAM_DIST,  N_ITER_BOOST),
-    "LightGBM":     (LGB_PARAM_DIST,  N_ITER_BOOST),
+    "LinearRegression": ({},             N_ITER_FAST,   TIMEOUT_FAST),
+    "Ridge":            (RIDGE_PARAM_DIST, N_ITER_FAST,   TIMEOUT_FAST),
+    "DecisionTree":     (DT_PARAM_DIST,   N_ITER_FAST,   TIMEOUT_FAST),
+    "RandomForest":     (RF_PARAM_DIST,   N_ITER_MED,    TIMEOUT_MED),
+    "XGBoost":          (XGB_PARAM_DIST,  N_ITER_BOOST,  TIMEOUT_BOOST),
+    "LightGBM":         (LGB_PARAM_DIST,  N_ITER_BOOST,  TIMEOUT_BOOST),
 }
