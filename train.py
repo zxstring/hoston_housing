@@ -7,23 +7,27 @@ from pathlib import Path
 import matplotlib; matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.datasets import fetch_openml
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.base import clone
 from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.kernel_ridge import KernelRidge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import (
-    PredefinedSplit,
     RandomizedSearchCV,
     RepeatedKFold,
+    ShuffleSplit,
     cross_val_score,
     train_test_split,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeRegressor
+from catboost import CatBoostRegressor
 from xgboost import XGBRegressor
-from lightgbm import LGBMRegressor, early_stopping
+from lightgbm import LGBMRegressor
 
 import config
 
@@ -85,24 +89,58 @@ def build(name):
     elif name == "DecisionTree":
         return DecisionTreeRegressor(random_state=SEED)
     elif name == "RandomForest":
-        return RandomForestRegressor(random_state=SEED)
+        return RandomForestRegressor(random_state=SEED, n_jobs=1)
+    elif name == "ExtraTrees":
+        return ExtraTreesRegressor(random_state=SEED, n_jobs=1)
+    elif name == "SVR":
+        base = Pipeline([
+            ("scaler", StandardScaler()),
+            ("svr", SVR()),
+        ])
+        return TransformedTargetRegressor(
+            regressor=base,
+            func=np.log1p,
+            inverse_func=np.expm1,
+        )
+    elif name == "KernelRidge":
+        base = Pipeline([
+            ("scaler", StandardScaler()),
+            ("krr", KernelRidge(kernel="rbf")),
+        ])
+        return TransformedTargetRegressor(
+            regressor=base,
+            func=np.log1p,
+            inverse_func=np.expm1,
+        )
     elif name == "XGBoost":
+        device = "cuda" if config.USE_GPU else "cpu"
         return XGBRegressor(
             random_state=SEED,
             tree_method="hist",
-            device="cpu",
+            device=device,
             verbosity=0,
             nthread=1,
             objective="reg:squarederror",
             eval_metric="rmse",
         )
     elif name == "LightGBM":
+        device = "gpu" if config.USE_GPU else "cpu"
         return LGBMRegressor(
             random_state=SEED,
-            device="cpu",
+            device=device,
             verbose=-1,
             num_threads=1,
             objective="regression",
+        )
+    elif name == "CatBoost":
+        task_type = "GPU" if config.USE_GPU else "CPU"
+        return CatBoostRegressor(
+            random_seed=SEED,
+            loss_function="RMSE",
+            task_type=task_type,
+            verbose=False,
+            allow_writing_files=False,
+            thread_count=1,
         )
     raise ValueError(f"Unknown model: {name}")
 
@@ -126,43 +164,28 @@ def _refit_best_boost(est, name, Xt, yt):
     refit.fit(Xt, yt)
     return refit
 
+
+def _boost_cv():
+    if config.BOOST_CV_MODE == "shuffle":
+        return ShuffleSplit(
+            n_splits=config.BOOST_SHUFFLE_SPLITS,
+            test_size=config.BOOST_SHUFFLE_TEST_SIZE,
+            random_state=SEED,
+        )
+    return RepeatedKFold(**config.BOOST_CV, random_state=SEED)
+
 def _fit_model(name, Xt, yt, Xe, ye):
     """Actual tuning + evaluation. Runs in a subprocess for timeout safety."""
     param_dist, n_iter, _ = config.MODEL_PARAMS[name]
-    is_boost = name in ("XGBoost", "LightGBM")
-
-    if is_boost:
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            Xt, yt, test_size=config.BOOST_VALID_SIZE, random_state=SEED)
-        X_search = pd.concat([X_tr, X_val], axis=0)
-        y_search = np.concatenate([y_tr, y_val])
-        test_fold = np.concatenate([
-            np.full(len(X_tr), -1),
-            np.zeros(len(X_val), dtype=int),
-        ])
-        cv = PredefinedSplit(test_fold)
-        if name == "XGBoost":
-            fit_params = {}
-        else:
-            fit_params = {
-                "eval_set": [(X_val, y_val)],
-                "callbacks": [
-                    early_stopping(config.BOOST_EARLY_STOP, verbose=False)
-                ],
-            }
-    else:
-        X_search, y_search = Xt, yt
-        cv = config.REGULAR_CV
-        fit_params = {}
+    is_boost = name in ("XGBoost", "LightGBM", "CatBoost")
+    X_search, y_search = Xt, yt
+    cv = _boost_cv() if is_boost else config.REGULAR_CV
 
     t0 = time.perf_counter()
     search = RandomizedSearchCV(
         build(name), param_distributions=param_dist, n_iter=n_iter,
         cv=cv, scoring="r2", n_jobs=1, random_state=SEED)
-    if fit_params:
-        search.fit(X_search, y_search, **fit_params)
-    else:
-        search.fit(X_search, y_search)
+    search.fit(X_search, y_search)
 
     est = search.best_estimator_
     if is_boost:
@@ -174,8 +197,7 @@ def _fit_model(name, Xt, yt, Xe, ye):
     mae = mean_absolute_error(ye, yp)
     r2 = r2_score(ye, yp)
 
-    eval_cv = RepeatedKFold(**config.BOOST_CV, random_state=SEED) \
-        if is_boost else config.REGULAR_CV
+    eval_cv = _boost_cv() if is_boost else config.REGULAR_CV
     cv_s = cross_val_score(est, Xt, yt, cv=eval_cv,
                            scoring="neg_mean_squared_error")
 
@@ -236,8 +258,7 @@ def main():
     Xt, Xe, yt, ye = load_and_prep()
     print(f"Train={Xt.shape[0]}  Test={Xe.shape[0]}  Features={Xt.shape[1]}")
 
-    model_order = ["LinearRegression", "Ridge", "DecisionTree",
-                   "RandomForest", "XGBoost", "LightGBM"]
+    model_order = ["XGBoost", "LightGBM", "RandomForest"]
 
     # Show config for each model
     for m in model_order:

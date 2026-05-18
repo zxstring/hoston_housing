@@ -1,5 +1,7 @@
 """Parameter grids for Boston housing price prediction models."""
 
+import os
+
 from scipy.stats import randint, uniform, loguniform
 
 RANDOM_STATE = 42
@@ -8,29 +10,30 @@ CV_FOLDS = 5
 
 N_ITER_FAST = 100   # Ridge, DT (instant)
 N_ITER_MED  = 30    # RandomForest (each fit trains many trees)
-N_ITER_BOOST = 60   # XGBoost, LightGBM (higher search budget for better R2)
+N_ITER_BOOST = 200  # XGBoost, LightGBM (larger search budget)
 N_ITER_SVR = 60     # SVR (needs broader search)
 N_ITER_ET = 40      # ExtraTrees (moderate search)
-N_ITER_STACK = 1    # Stacking (fixed architecture)
 N_ITER_KRR = 60     # KernelRidge (rbf)
+N_ITER_CAT = 50     # CatBoost
 
-# Use RepeatedKFold for boosting models to reduce CV variance
-BOOST_CV = {"n_splits": 5, "n_repeats": 2}
+# Use a single shuffle split for boosting search to emphasize holdout
+BOOST_CV_MODE = "shuffle"
+BOOST_SHUFFLE_SPLITS = 1
+BOOST_SHUFFLE_TEST_SIZE = 0.2
+BOOST_CV = {"n_splits": 3, "n_repeats": 1}
 REGULAR_CV = 5
 
 # Per-model timeout (seconds) — boosting models get more headroom
 TIMEOUT_FAST = 60
 TIMEOUT_MED = 120
-TIMEOUT_BOOST = 420
+TIMEOUT_BOOST = 900
 TIMEOUT_SVR = 300
 TIMEOUT_ET = 240
-TIMEOUT_STACK = 600
 TIMEOUT_KRR = 240
-TIMEOUT_XGB_FIXED = 240
+TIMEOUT_CAT = 360
 
-# Boosting-specific validation split + early stopping
-BOOST_VALID_SIZE = 0.2
-BOOST_EARLY_STOP = 50
+# Optional GPU acceleration (set USE_GPU=1 in env to enable)
+USE_GPU = os.environ.get("USE_GPU", "0") == "1"
 
 # ── RandomizedSearchCV distributions ──────────────────────────────────────
 
@@ -53,28 +56,28 @@ RF_PARAM_DIST = {
 }
 
 XGB_PARAM_DIST = {
-    "n_estimators": randint(200, 2000),
-    "max_depth": randint(2, 10),
-    "learning_rate": loguniform(0.01, 0.3),
-    "subsample": uniform(0.6, 0.4),
-    "colsample_bytree": uniform(0.6, 0.4),
-    "min_child_weight": randint(1, 12),
-    "gamma": uniform(0, 5),
-    "reg_lambda": uniform(0, 20),
-    "reg_alpha": uniform(0, 20),
+    "n_estimators": [600, 800, 1000, 1200, 1600, 2000],
+    "max_depth": [4, 5, 6, 7, 8],
+    "learning_rate": [0.02, 0.03, 0.05, 0.08, 0.1],
+    "subsample": [0.8, 0.9, 1.0],
+    "colsample_bytree": [0.8, 0.9, 1.0],
+    "min_child_weight": [1, 2, 3],
+    "gamma": [0, 0.05, 0.1, 0.2],
+    "reg_lambda": [0.5, 1.0, 2.0, 3.0],
+    "reg_alpha": [0, 0.1, 0.3, 0.5],
 }
 
 LGB_PARAM_DIST = {
-    "n_estimators": randint(200, 2000),
-    "max_depth": randint(2, 12),
-    "learning_rate": loguniform(0.01, 0.3),
-    "subsample": uniform(0.6, 0.4),
-    "colsample_bytree": uniform(0.6, 0.4),
-    "reg_lambda": uniform(0, 20),
-    "reg_alpha": uniform(0, 20),
-    "num_leaves": randint(20, 256),
-    "min_child_samples": randint(5, 60),
-    "min_split_gain": uniform(0, 0.5),
+    "n_estimators": [600, 800, 1000, 1200, 1600, 2000],
+    "max_depth": [-1, 4, 5, 6, 7, 8],
+    "learning_rate": [0.02, 0.03, 0.05, 0.08, 0.1],
+    "subsample": [0.7, 0.8, 0.9, 1.0],
+    "colsample_bytree": [0.7, 0.8, 0.9, 1.0],
+    "reg_lambda": [0, 0.5, 1.0, 2.0],
+    "reg_alpha": [0, 0.1, 0.5],
+    "num_leaves": [31, 63, 127, 255],
+    "min_child_samples": [2, 5, 10, 20],
+    "min_split_gain": [0, 0.1, 0.2],
 }
 
 ET_PARAM_DIST = {
@@ -97,6 +100,15 @@ KRR_PARAM_DIST = {
     "regressor__krr__gamma": loguniform(1e-4, 1e-1),
 }
 
+CAT_PARAM_DIST = {
+    "iterations": randint(500, 2000),
+    "depth": randint(4, 10),
+    "learning_rate": loguniform(0.02, 0.2),
+    "l2_leaf_reg": uniform(1, 9),
+    "bagging_temperature": uniform(0, 2),
+    "random_strength": uniform(0, 2),
+}
+
 MODEL_PARAMS = {
     "LinearRegression": ({},             N_ITER_FAST,   TIMEOUT_FAST),
     "Ridge":            (RIDGE_PARAM_DIST, N_ITER_FAST,   TIMEOUT_FAST),
@@ -106,7 +118,6 @@ MODEL_PARAMS = {
     "LightGBM":         (LGB_PARAM_DIST,  N_ITER_BOOST,  TIMEOUT_BOOST),
     "ExtraTrees":       (ET_PARAM_DIST,   N_ITER_ET,     TIMEOUT_ET),
     "SVR":              (SVR_PARAM_DIST,  N_ITER_SVR,    TIMEOUT_SVR),
-    "Stacking":         ({},              N_ITER_STACK, TIMEOUT_STACK),
     "KernelRidge":      (KRR_PARAM_DIST,  N_ITER_KRR,    TIMEOUT_KRR),
-    "XGBoostFixed":      ({},              1,            TIMEOUT_XGB_FIXED),
+    "CatBoost":         (CAT_PARAM_DIST,  N_ITER_CAT,    TIMEOUT_CAT),
 }
