@@ -74,7 +74,12 @@ def load_and_prep():
 # ── Model builders ──────────────────────────────────────────────────────────
 
 def build(name):
-    if name == "LinearRegression":
+    if name == "BaselineLR":
+        return Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LinearRegression()),
+        ])
+    elif name == "LinearRegression":
         return Pipeline([
             ("poly", PolynomialFeatures(degree=2, include_bias=False)),
             ("scaler", StandardScaler()),
@@ -258,7 +263,7 @@ def main():
     Xt, Xe, yt, ye = load_and_prep()
     print(f"Train={Xt.shape[0]}  Test={Xe.shape[0]}  Features={Xt.shape[1]}")
 
-    model_order = ["XGBoost", "LightGBM", "RandomForest"]
+    model_order = ["BaselineLR", "XGBoost", "LightGBM", "RandomForest"]
 
     # Show config for each model
     for m in model_order:

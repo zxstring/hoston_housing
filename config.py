@@ -110,6 +110,7 @@ CAT_PARAM_DIST = {
 }
 
 MODEL_PARAMS = {
+    "BaselineLR":       ({"lr__fit_intercept": [True]}, 1, TIMEOUT_FAST),
     "LinearRegression": ({},             N_ITER_FAST,   TIMEOUT_FAST),
     "Ridge":            (RIDGE_PARAM_DIST, N_ITER_FAST,   TIMEOUT_FAST),
     "DecisionTree":     (DT_PARAM_DIST,   N_ITER_FAST,   TIMEOUT_FAST),
